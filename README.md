@@ -39,6 +39,7 @@ LowLex keeps the keys and translations of your apps in one place, lets developer
 - **Translation editor.** Search keys, texts and context; filter by missing, draft, not reviewed or reviewed per language; pick which language columns to show; edit every language of a key side by side; `Ctrl + Enter` saves.
 - **Machine translation and AI.** Google Cloud Translation, DeepL, Microsoft Translator, LibreTranslate and any OpenAI-compatible chat API (OpenAI, OpenRouter, Groq, Ollama, LM Studio, vLLM…). Ask every provider for a suggestion on one text, or fill a whole language in one go as drafts. AI providers get the project description, the key name and its context, keep placeholders (`{name}`, `{{count}}`, `%s`, ICU plurals, tags) and can follow your own instructions or glossary. Provider keys are encrypted at rest (AES-256-GCM).
 - **Import and export.** JSON (flat or nested, i18next / vue-i18n style), CSV with every language in one sheet, Gettext PO, Android `strings.xml`, Apple `.strings` and Java `.properties`. Upload one file or a ZIP of many: the language comes from the file name and folders become namespaces.
+- **Straight from Tolgee.** Import a whole Tolgee project through its API in a background task with progress and resume, see [Coming from Tolgee](#coming-from-tolgee).
 - **API keys per project.** Read keys for apps and builds, write keys for CI. Every endpoint the UI uses also takes an API key.
 - **Activity history** per project.
 
@@ -120,7 +121,15 @@ Import fields (multipart): `file`, `lang` (otherwise from the file name), `names
 
 ### Coming from Tolgee
 
-In Tolgee, export the project as JSON with one file per language (ZIP), then import the ZIP into a LowLex project. Keys, languages and namespaces come across; review states start as *translated*.
+**Projects → Import from Tolgee** reads a project straight from your Tolgee server through its API, so even very large projects move without exporting files. Give it the Tolgee URL and a project API key (`tgpak_…`, scope `translations.view`) or a personal access token (`tgpat_…`) plus the project id. LowLex brings over languages, namespaces, key descriptions, tags, translated texts and the reviewed state.
+
+The import is a background task: it reads 500 keys at a time, shows its progress under **Tasks** and on the project page, and saves its position after every page. If LowLex restarts, it continues where it stopped; a failed or cancelled import can be retried from the same point. A 160,000-key project imports in seconds once Tolgee has answered.
+
+You can also export from Tolgee as JSON with one file per language (ZIP) and import the ZIP; that keeps keys, languages and namespaces, and review states start as *translated*.
+
+### Background tasks
+
+Tolgee imports and machine translation of whole languages run as tasks under **Tasks**, with progress, an estimate of the time left, stop and retry. They survive restarts.
 
 ## Develop
 

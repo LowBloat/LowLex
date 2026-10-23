@@ -1,7 +1,7 @@
 <!-- @codeatlasdev/ui demo #166 · MIT License (c) CodeAtlas · https://ui.codeatlas.com.br/docs/layout/app-shell#live-shell -->
 <script lang="ts">
 	import { AppShellLayout, Avatar, ThemeToggle, IconButton, Spinner, type NavModule } from '@codeatlasdev/ui';
-	import { FolderKanban, LayoutGrid, Languages, Shield, Users, Sparkles, UserRound, LogOut } from '@lucide/svelte';
+	import { FolderKanban, LayoutGrid, Languages, Shield, Users, Sparkles, UserRound, LogOut, ListChecks } from '@lucide/svelte';
 	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
@@ -35,9 +35,10 @@
 				basePath: '/projects',
 				// ca-ui-workaround(#408): a nav item stays active on every path under it, so "All projects"
 				// at /projects would light up beside each project; project pages live under /p instead.
-				pathPrefixes: ['/p'],
+				pathPrefixes: ['/p', '/jobs'],
 				items: [
 					{ id: 'all-projects', label: t('nav.allProjects'), icon: LayoutGrid, path: '/projects' },
+					{ id: 'jobs', label: t('nav.jobs'), icon: ListChecks, path: '/jobs' },
 					...(session.projects.length
 						? [
 								{

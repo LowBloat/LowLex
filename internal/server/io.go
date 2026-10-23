@@ -371,30 +371,31 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, pc *projectCtx) 
 		return badRequest("Unknown language in lang=%s", q.Get("lang"))
 	}
 
-	data, err := s.exportData(r.Context(), pc, nsFilter, ns, minState)
+	keys, err := s.exportKeys(r.Context(), pc.ID, nsFilter, ns)
 	if err != nil {
 		return err
 	}
 	base := pc.Slug
 	if format == "csv" {
-		entries := data.allKeys()
-		rows := make(map[string]map[string]string, len(entries))
-		for i, k := range data.keys {
-			rows[entries[i].Key] = data.texts[k.id]
-		}
-		body := formats.RenderCSV(entries, codes, rows)
-		return sendFile(w, base+".csv", "text/csv; charset=utf-8", body)
+		return s.exportCSV(w, r, pc.ID, keys, codes, minState, nsFilter, ns, base+".csv")
 	}
 
-	render := func(code, namespace string) ([]byte, error) {
+	// Texts are read one language at a time, so a large project never sits in memory whole.
+	var baseTexts map[int64]string
+	if fallback {
+		if baseTexts, err = s.exportTexts(r.Context(), pc.ID, pc.BaseLanguage, minState); err != nil {
+			return err
+		}
+	}
+	render := func(texts map[int64]string, namespace string) ([]byte, error) {
 		entries := []formats.Entry{}
-		for _, k := range data.keys {
+		for _, k := range keys {
 			if k.ns != namespace {
 				continue
 			}
-			text, ok := data.texts[k.id][code]
+			text, ok := texts[k.id]
 			if !ok && fallback {
-				text, ok = data.texts[k.id][pc.BaseLanguage]
+				text, ok = baseTexts[k.id]
 			}
 			if !ok {
 				continue
@@ -403,25 +404,35 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, pc *projectCtx) 
 		}
 		return formats.Render(format, entries)
 	}
-	namespaces := data.namespaces()
+	namespaces := keyNamespaces(keys)
 
 	if len(codes) == 1 && len(namespaces) <= 1 {
 		nsName := ""
 		if len(namespaces) == 1 {
 			nsName = namespaces[0]
 		}
-		body, err := render(codes[0], nsName)
+		texts, err := s.exportTexts(r.Context(), pc.ID, codes[0], minState)
+		if err != nil {
+			return err
+		}
+		body, err := render(texts, nsName)
 		if err != nil {
 			return err
 		}
 		return sendFile(w, exportName(info, codes[0], ""), contentType(info.Ext), body)
 	}
 
-	var buf bytes.Buffer
-	zw := zip.NewWriter(&buf)
+	// the ZIP is written straight to the response
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+base+"-"+format+`.zip"`)
+	zw := zip.NewWriter(w)
 	for _, code := range codes {
+		texts, err := s.exportTexts(r.Context(), pc.ID, code, minState)
+		if err != nil {
+			return err
+		}
 		for _, n := range namespaces {
-			body, err := render(code, n)
+			body, err := render(texts, n)
 			if err != nil {
 				return err
 			}
@@ -429,13 +440,12 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, pc *projectCtx) 
 			if err != nil {
 				return err
 			}
-			f.Write(body)
+			if _, err := f.Write(body); err != nil {
+				return err
+			}
 		}
 	}
-	if err := zw.Close(); err != nil {
-		return err
-	}
-	return sendFile(w, base+"-"+format+".zip", "application/zip", buf.Bytes())
+	return zw.Close()
 }
 
 func exportName(info formats.Info, code, ns string) string {
@@ -478,15 +488,10 @@ type exportKey struct {
 	ns, name, desc string
 }
 
-type exportSet struct {
-	keys  []exportKey
-	texts map[int64]map[string]string
-}
-
-func (e *exportSet) namespaces() []string {
+func keyNamespaces(keys []exportKey) []string {
 	seen := map[string]bool{}
 	out := []string{}
-	for _, k := range e.keys {
+	for _, k := range keys {
 		if !seen[k.ns] {
 			seen[k.ns] = true
 			out = append(out, k.ns)
@@ -495,21 +500,9 @@ func (e *exportSet) namespaces() []string {
 	return out
 }
 
-func (e *exportSet) allKeys() []formats.Entry {
-	out := make([]formats.Entry, len(e.keys))
-	for i, k := range e.keys {
-		name := k.name
-		if k.ns != "" {
-			name = k.ns + ":" + k.name
-		}
-		out[i] = formats.Entry{Key: name, Description: k.desc}
-	}
-	return out
-}
-
-func (s *Server) exportData(ctx context.Context, pc *projectCtx, nsFilter bool, ns, minState string) (*exportSet, error) {
+func (s *Server) exportKeys(ctx context.Context, projectID int64, nsFilter bool, ns string) ([]exportKey, error) {
 	q := `SELECT id, namespace, name, description FROM keys WHERE project_id = ?`
-	args := []any{pc.ID}
+	args := []any{projectID}
 	if nsFilter {
 		q += ` AND namespace = ?`
 		args = append(args, ns)
@@ -518,42 +511,98 @@ func (s *Server) exportData(ctx context.Context, pc *projectCtx, nsFilter bool, 
 	if err != nil {
 		return nil, err
 	}
-	set := &exportSet{texts: map[int64]map[string]string{}}
+	defer rows.Close()
+	keys := []exportKey{}
 	for rows.Next() {
 		var k exportKey
 		if err := rows.Scan(&k.id, &k.ns, &k.name, &k.desc); err != nil {
-			rows.Close()
 			return nil, err
 		}
-		set.keys = append(set.keys, k)
+		keys = append(keys, k)
 	}
-	rows.Close()
+	return keys, rows.Err()
+}
 
-	tq := `SELECT t.key_id, l.code, t.text FROM translations t JOIN languages l ON l.id = t.language_id
-		JOIN keys k ON k.id = t.key_id WHERE k.project_id = ?`
+func stateFilter(minState string) string {
 	switch minState {
 	case "translated":
-		tq += ` AND t.state IN ('translated', 'reviewed')`
+		return ` AND t.state IN ('translated', 'reviewed')`
 	case "reviewed":
-		tq += ` AND t.state = 'reviewed'`
+		return ` AND t.state = 'reviewed'`
 	}
-	trows, err := s.db.QueryContext(ctx, tq, pc.ID)
+	return ""
+}
+
+// exportTexts returns one language's texts by key id.
+func (s *Server) exportTexts(ctx context.Context, projectID int64, code, minState string) (map[int64]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT t.key_id, t.text FROM translations t JOIN languages l ON l.id = t.language_id
+		WHERE l.project_id = ? AND l.code = ?`+stateFilter(minState), projectID, code)
 	if err != nil {
 		return nil, err
 	}
-	defer trows.Close()
-	for trows.Next() {
+	defer rows.Close()
+	texts := map[int64]string{}
+	for rows.Next() {
 		var id int64
-		var code, text string
-		if err := trows.Scan(&id, &code, &text); err != nil {
+		var text string
+		if err := rows.Scan(&id, &text); err != nil {
 			return nil, err
 		}
-		if set.texts[id] == nil {
-			set.texts[id] = map[string]string{}
-		}
-		set.texts[id][code] = text
+		texts[id] = text
 	}
-	return set, trows.Err()
+	return texts, rows.Err()
+}
+
+// exportCSV streams every language side by side, reading translations in key order.
+func (s *Server) exportCSV(w http.ResponseWriter, r *http.Request, projectID int64, keys []exportKey, codes []string, minState string, nsFilter bool, ns, name string) error {
+	// same keys and same order as exportKeys, so the two lists can be merged
+	q := `SELECT t.key_id, l.code, t.text FROM translations t
+		JOIN languages l ON l.id = t.language_id JOIN keys k ON k.id = t.key_id
+		WHERE k.project_id = ?` + stateFilter(minState)
+	args := []any{projectID}
+	if nsFilter {
+		q += ` AND k.namespace = ?`
+		args = append(args, ns)
+	}
+	rows, err := s.db.QueryContext(r.Context(), q+` ORDER BY k.namespace, k.name`, args...)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition", `attachment; filename="`+name+`"`)
+	cw := formats.NewCSVWriter(w, codes)
+
+	var (
+		rowKey  int64 = -1
+		rowLang string
+		rowText string
+		more    = rows.Next()
+	)
+	if more {
+		if err := rows.Scan(&rowKey, &rowLang, &rowText); err != nil {
+			return err
+		}
+	}
+	for _, k := range keys {
+		texts := map[string]string{}
+		for more && rowKey == k.id {
+			texts[rowLang] = rowText
+			if more = rows.Next(); more {
+				if err := rows.Scan(&rowKey, &rowLang, &rowText); err != nil {
+					return err
+				}
+			}
+		}
+		display := k.name
+		if k.ns != "" {
+			display = k.ns + ":" + k.name
+		}
+		if err := cw.Write(display, k.desc, texts); err != nil {
+			return err
+		}
+	}
+	return cw.Flush()
 }
 
 // --- API keys ---

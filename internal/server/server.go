@@ -32,11 +32,13 @@ type Server struct {
 	ui      fs.FS
 	mux     *http.ServeMux
 	limiter *loginLimiter
+	jobs    *jobRunner
 }
 
 func New(db *sql.DB, cfg config.Config, box *secure.Box, ui fs.FS) *Server {
 	s := &Server{db: db, cfg: cfg, box: box, ui: ui, mux: http.NewServeMux(), limiter: newLoginLimiter()}
 	s.routes()
+	s.startJobs()
 	return s
 }
 
@@ -165,6 +167,14 @@ func (s *Server) routes() {
 	m.Handle("POST /api/providers/{id}/test", s.user(s.testProvider, adminOnly))
 
 	// projects
+	m.Handle("GET /api/jobs", s.user(s.listJobs, 0))
+	m.Handle("GET /api/jobs/{id}", s.user(s.getJob, 0))
+	m.Handle("POST /api/jobs/{id}/cancel", s.user(s.cancelJob, 0))
+	m.Handle("POST /api/jobs/{id}/retry", s.user(s.retryJob, 0))
+
+	m.Handle("POST /api/tolgee/inspect", s.user(s.tolgeeInspect, adminOnly))
+	m.Handle("POST /api/tolgee/import", s.user(s.tolgeeImport, adminOnly))
+
 	m.Handle("GET /api/projects", s.user(s.listProjects, 0))
 	m.Handle("POST /api/projects", s.user(s.createProject, adminOnly))
 	m.Handle("GET /api/projects/{slug}", s.project(roleViewer, s.getProject))

@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/LowBloat/LowLex/internal/config"
 	"github.com/LowBloat/LowLex/internal/secure"
@@ -39,8 +40,10 @@ func newTestServer(t *testing.T) (*httptest.Server, func() *client) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(New(db, config.Config{}, box, nil))
+	app := New(db, config.Config{}, box, nil)
+	ts := httptest.NewServer(app)
 	t.Cleanup(ts.Close)
+	t.Cleanup(app.Close)
 	return ts, func() *client {
 		jar, _ := cookiejar.New(nil)
 		return &client{t: t, base: ts.URL, http: &http.Client{Jar: jar}}
@@ -72,6 +75,19 @@ func (c *client) do(method, path string, body any, want int) map[string]any {
 	out := map[string]any{}
 	json.Unmarshal(raw, &out)
 	return out
+}
+
+// waitJob polls a background job until it leaves the queue or a 10 s timeout.
+func (c *client) waitJob(id int) map[string]any {
+	c.t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		job := c.do("GET", fmt.Sprintf("/api/jobs/%d", id), nil, 200)["job"].(map[string]any)
+		if st := job["status"]; (st != "queued" && st != "running") || time.Now().After(deadline) {
+			return job
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func (c *client) raw(path string) (int, string) {
@@ -237,9 +253,12 @@ func TestAIProvider(t *testing.T) {
 	admin.do("POST", "/api/projects", map[string]any{"name": "App", "languages": []string{"pt-BR"}}, 201)
 	admin.upload("/api/projects/app/import", "en.json", `{"a":"One","b":"Two","c":"Three"}`, nil, 200)
 
-	res := admin.do("POST", "/api/projects/app/mt/batch", map[string]any{"lang": "pt-BR", "provider_id": pid}, 200)
-	if res["translated"].(float64) != 3 {
+	res := admin.do("POST", "/api/projects/app/mt/batch", map[string]any{"lang": "pt-BR", "provider_id": pid}, 201)
+	if res["total"].(float64) != 3 {
 		t.Fatalf("batch: %v", res)
+	}
+	if job := admin.waitJob(int(res["job_id"].(float64))); job["status"] != "done" || job["done"].(float64) != 3 {
+		t.Fatalf("batch job: %v", job)
 	}
 	keys := admin.do("GET", "/api/projects/app/keys?q=One", nil, 200)["keys"].([]any)
 	tr := keys[0].(map[string]any)["translations"].(map[string]any)["pt-BR"].(map[string]any)

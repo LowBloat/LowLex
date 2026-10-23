@@ -1,7 +1,8 @@
 <!-- @codeatlasdev/ui demo #085 · MIT License (c) CodeAtlas · https://ui.codeatlas.com.br/docs/feedback/dialog#form -->
 <script lang="ts">
 	import { Dialog, Button, Select, Stack, Switch, Alert, Callout, Progress, toast } from '@codeatlasdev/ui';
-	import { api, type Provider } from '#lib/api.ts';
+	import { api, type Job, type Provider } from '#lib/api.ts';
+	import { watchJob, percent } from '#lib/jobs.svelte.ts';
 	import { useProject } from '#lib/project.svelte.ts';
 	import { langName } from '#lib/session.svelte.ts';
 	import { t, num } from '#lib/i18n.svelte.ts';
@@ -36,28 +37,59 @@
 		return s ? Math.max(0, (project.detail?.keys ?? 0) - s.translated - s.draft) : 0;
 	});
 
+	let job = $state<Job | null>(null);
+	let stopWatch: (() => void) | null = null;
+
 	async function run() {
 		busy = true;
 		error = '';
 		try {
-			const res = await api.post<{ translated: number; failed: number; error?: string }>(project.api('/mt/batch'), {
+			const res = await api.post<{ job_id: number | null; total: number }>(project.api('/mt/batch'), {
 				lang,
 				provider_id: Number(providerId),
 				overwrite,
 				state: asDraft ? 'draft' : 'translated',
 				key_ids: keyIds
 			});
-			if (res.error) error = res.error;
-			if (res.translated) toast.success(t('batch.done', { n: num(res.translated), lang: langName(lang) }));
-			else if (!res.error) toast.info(t('batch.nothing'));
-			ondone();
-			if (!res.error) open = false;
+			if (!res.job_id) {
+				toast.info(t('batch.nothing'));
+				busy = false;
+				return;
+			}
+			stopWatch = watchJob(res.job_id, (j) => {
+				job = j;
+				if (j.status === 'done') {
+					const n = (j.result as Record<string, number> | undefined)?.translated ?? j.done;
+					toast.success(t('batch.done', { n: num(n), lang: langName(lang) }));
+					finish();
+					open = false;
+				} else if (j.status === 'failed' || j.status === 'cancelled') {
+					error = j.message || t('jobs.state.' + j.status);
+					finish();
+				}
+			});
 		} catch (e) {
 			error = (e as Error).message;
-		} finally {
 			busy = false;
 		}
 	}
+
+	function finish() {
+		busy = false;
+		job = null;
+		stopWatch?.();
+		ondone();
+	}
+
+	// closing the dialog leaves the job running; the strip on the project page keeps showing it
+	$effect(() => {
+		if (!open && stopWatch) {
+			stopWatch();
+			stopWatch = null;
+			busy = false;
+			job = null;
+		}
+	});
 </script>
 
 <Dialog bind:open title={t('batch.title')} description={t('batch.description')} size="md">
@@ -81,11 +113,15 @@
 			{#if project.can.review}
 				<Switch label={t('batch.overwrite')} bind:checked={overwrite} />
 			{/if}
-			{#if busy}<Progress indeterminate label={t('batch.running')} />{/if}
+			{#if job}
+				<Progress value={percent(job)} indeterminate={job.status === 'queued'} label={t('batch.running')} />
+				<span class="lx-muted lx-mono">{num(job.done)} / {num(job.total)} · {percent(job)}%</span>
+				<p class="lx-muted">{t('batch.background')}</p>
+			{/if}
 		{/if}
 	</Stack>
 	{#snippet actions()}
-		<Button variant="ghost" onclick={() => (open = false)}>{t('common.cancel')}</Button>
+		<Button variant="ghost" onclick={() => (open = false)}>{job ? t('batch.hide') : t('common.cancel')}</Button>
 		<Button variant="filled" loading={busy} disabled={!providers.length || !lang} onclick={run}>{t('batch.run')}</Button>
 	{/snippet}
 </Dialog>

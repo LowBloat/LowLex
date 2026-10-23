@@ -12,6 +12,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"fmt"
+	"io"
 	"regexp"
 	"sort"
 	"strconv"
@@ -252,21 +253,42 @@ func ParseCSV(data []byte) (map[string]map[string]string, map[string]string, err
 	return texts, descs, nil
 }
 
+// CSVWriter streams the all-languages sheet row by row.
+type CSVWriter struct {
+	w     *csv.Writer
+	langs []string
+}
+
+// NewCSVWriter writes the BOM (so spreadsheet apps read UTF-8) and the header row.
+func NewCSVWriter(out io.Writer, langs []string) *CSVWriter {
+	io.WriteString(out, "\xef\xbb\xbf")
+	c := &CSVWriter{w: csv.NewWriter(out), langs: langs}
+	c.w.Write(append([]string{"key", "description"}, langs...))
+	return c
+}
+
+func (c *CSVWriter) Write(key, description string, texts map[string]string) error {
+	rec := []string{key, description}
+	for _, l := range c.langs {
+		rec = append(rec, texts[l])
+	}
+	return c.w.Write(rec)
+}
+
+func (c *CSVWriter) Flush() error {
+	c.w.Flush()
+	return c.w.Error()
+}
+
 // RenderCSV writes every language in one sheet. rows[key][lang] = text.
 func RenderCSV(keys []Entry, langs []string, rows map[string]map[string]string) []byte {
 	var buf bytes.Buffer
-	buf.WriteString("\xef\xbb\xbf") // BOM so spreadsheet apps read UTF-8
-	w := csv.NewWriter(&buf)
-	w.Write(append([]string{"key", "description"}, langs...))
+	cw := NewCSVWriter(&buf, langs)
 	sort.Slice(keys, func(i, j int) bool { return keys[i].Key < keys[j].Key })
 	for _, k := range keys {
-		rec := []string{k.Key, k.Description}
-		for _, l := range langs {
-			rec = append(rec, rows[k.Key][l])
-		}
-		w.Write(rec)
+		cw.Write(k.Key, k.Description, rows[k.Key])
 	}
-	w.Flush()
+	cw.Flush()
 	return buf.Bytes()
 }
 
