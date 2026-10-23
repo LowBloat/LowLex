@@ -23,6 +23,8 @@ type Client struct {
 	APIKey    string
 	ProjectID int64
 	HTTP      *http.Client
+	// OnRateLimit is told how long the client waits after a 429.
+	OnRateLimit func(wait time.Duration)
 }
 
 type Language struct {
@@ -89,6 +91,10 @@ func (e *Error) Error() string {
 	return fmt.Sprintf("Tolgee answered %d: %s", e.Status, e.Body)
 }
 
+// MaxRateLimitWait bounds how long one request keeps waiting out Tolgee's rate limits.
+// A self-hosted Tolgee allows 100 translation requests per user every 5 minutes by default.
+const MaxRateLimitWait = 2 * time.Hour
+
 func (c *Client) get(ctx context.Context, path string, q url.Values, out any) error {
 	base := strings.TrimRight(c.BaseURL, "/")
 	u := base + path
@@ -96,14 +102,9 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		u += "?" + q.Encode()
 	}
 	var lastErr error
-	for attempt := range 6 {
-		if attempt > 0 {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(time.Duration(1<<attempt) * time.Second):
-			}
-		}
+	failures := 0
+	var waited time.Duration
+	for {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 		if err != nil {
 			return err
@@ -111,33 +112,66 @@ func (c *Client) get(ctx context.Context, path string, q url.Values, out any) er
 		req.Header.Set("X-API-Key", c.APIKey)
 		req.Header.Set("Accept", "application/json")
 		resp, err := c.client().Do(req)
-		if err != nil {
+		var body []byte
+		if err == nil {
+			body, err = io.ReadAll(io.LimitReader(resp.Body, 256<<20))
+			resp.Body.Close()
+		}
+		var wait time.Duration
+		switch {
+		case err != nil:
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			lastErr = err
-			continue
-		}
-		body, err := io.ReadAll(io.LimitReader(resp.Body, 256<<20))
-		resp.Body.Close()
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		// rate limits and server hiccups are retried; anything else is final
-		if resp.StatusCode == 429 || resp.StatusCode >= 500 {
+		case resp.StatusCode == 429:
+			// wait as long as Tolgee asks; hammering it only adds strikes and gets the connection dropped
+			wait = retryAfter(resp, body)
+			if waited+wait > MaxRateLimitWait {
+				return &Error{429, snippet(body)}
+			}
+			waited += wait
+			if c.OnRateLimit != nil {
+				c.OnRateLimit(wait)
+			}
+		case resp.StatusCode >= 500:
 			lastErr = &Error{resp.StatusCode, snippet(body)}
-			continue
-		}
-		if resp.StatusCode >= 300 {
+		case resp.StatusCode >= 300:
 			return &Error{resp.StatusCode, snippet(body)}
+		default:
+			if err := json.Unmarshal(body, out); err != nil {
+				return fmt.Errorf("unexpected answer from %s: %w", path, err)
+			}
+			return nil
 		}
-		if err := json.Unmarshal(body, out); err != nil {
-			return fmt.Errorf("unexpected answer from %s: %w", path, err)
+		if wait == 0 {
+			// network errors and server errors: a few tries with growing pauses
+			failures++
+			if failures > 6 {
+				return lastErr
+			}
+			wait = time.Duration(1<<failures) * time.Second
 		}
-		return nil
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(wait):
+		}
 	}
-	return lastErr
+}
+
+// retryAfter reads Tolgee's hint: {"retryAfter": ms} in the body or a Retry-After header in seconds.
+func retryAfter(resp *http.Response, body []byte) time.Duration {
+	var hint struct {
+		RetryAfter int64 `json:"retryAfter"`
+	}
+	if json.Unmarshal(body, &hint) == nil && hint.RetryAfter > 0 {
+		return time.Duration(hint.RetryAfter)*time.Millisecond + time.Second
+	}
+	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
+		return time.Duration(s)*time.Second + time.Second
+	}
+	return 30 * time.Second
 }
 
 func snippet(b []byte) string {

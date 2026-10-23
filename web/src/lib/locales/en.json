@@ -134,6 +134,7 @@
   "jobs.kind.tolgee.import": "Tolgee import",
   "jobs.progress": "Progress",
   "jobs.progressLabel": "{done} of {total}",
+  "jobs.rateLimited": "Tolgee asked to slow down: waiting {time}, then it continues on its own",
   "jobs.result.mt": "{n} texts translated",
   "jobs.result.tolgee": "{keys} keys, {texts} texts imported",
   "jobs.retried": "Task queued again; it continues where it stopped",

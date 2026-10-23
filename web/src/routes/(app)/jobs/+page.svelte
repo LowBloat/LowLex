@@ -7,7 +7,7 @@
 	import { ListChecks, RotateCcw, X } from '@lucide/svelte';
 	import { onMount } from 'svelte';
 	import { api, type Job } from '#lib/api.ts';
-	import { watchJobs, isActive, percent, eta, duration } from '#lib/jobs.svelte.ts';
+	import { watchJobs, isActive, percent, eta, duration, rateLimitWait } from '#lib/jobs.svelte.ts';
 	import { t, num, relativeTime, formatDate } from '#lib/i18n.svelte.ts';
 
 	let jobs = $state<Job[] | null>(null);
@@ -78,6 +78,7 @@
 							<span class="meta lx-mono">
 								{num(j.done)} / {num(j.total)} · {percent(j)}%{#if left !== null} · {t('jobs.eta', { time: duration(left) })}{/if}
 							</span>
+							{#if rateLimitWait(j) !== null}<span class="meta">{t('jobs.rateLimited', { time: duration(rateLimitWait(j)!) })}</span>{/if}
 							{#if j.status === 'failed' && j.message}<span class="error">{j.message}</span>{/if}
 							{#if j.status === 'done' && summary(j)}<span class="meta">{summary(j)}</span>{/if}
 						</Stack>

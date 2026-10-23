@@ -13,10 +13,11 @@ import (
 )
 
 // fakeTolgee serves a Tolgee project with n keys in three languages, paged by cursor.
-// When failAt > 0, the first request for that page answers 400 once.
-func fakeTolgee(t *testing.T, n int, failAt int) (*httptest.Server, *atomic.Int32) {
+// When failAt > 0, the first request for that page answers 400 once; when limitAt > 0, the
+// first request for that page answers 429 with a short retryAfter, like Tolgee's rate limiter.
+func fakeTolgee(t *testing.T, n int, failAt int, limitAt ...int) (*httptest.Server, *atomic.Int32) {
 	var pagesServed atomic.Int32
-	var failed atomic.Bool
+	var failed, limited atomic.Bool
 	mux := http.NewServeMux()
 	auth := func(h http.HandlerFunc) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +45,11 @@ func fakeTolgee(t *testing.T, n int, failAt int) (*httptest.Server, *atomic.Int3
 		size, _ := strconv.Atoi(r.URL.Query().Get("size"))
 		start, _ := strconv.Atoi(r.URL.Query().Get("cursor"))
 		page := start / max(size, 1)
+		if len(limitAt) > 0 && page == limitAt[0] && !limited.Swap(true) {
+			w.WriteHeader(429)
+			fmt.Fprint(w, `{"message": "rate_limited", "retryAfter": 20, "global": false}`)
+			return
+		}
 		if failAt > 0 && page == failAt && !failed.Swap(true) {
 			w.WriteHeader(400)
 			fmt.Fprint(w, `{"code": "bad"}`)
@@ -165,5 +171,18 @@ func TestTolgeeImport(t *testing.T) {
 	jobs := admin.do("GET", "/api/jobs?project=big-app", nil, 200)["jobs"].([]any)
 	if len(jobs) != 2 {
 		t.Fatalf("jobs: %v", jobs)
+	}
+}
+
+func TestTolgeeImportWaitsOutRateLimit(t *testing.T) {
+	tg, pages := fakeTolgee(t, 1200, 0, 1)
+	_, newClient := newTestServer(t)
+	admin := newClient()
+	admin.do("POST", "/api/auth/login", map[string]string{"username": "admin", "password": DefaultAdminPassword}, 200)
+	admin.do("POST", "/api/auth/password", map[string]string{"current_password": DefaultAdminPassword, "new_password": "rate-limit-password"}, 200)
+	res := admin.do("POST", "/api/tolgee/import", map[string]any{"url": tg.URL, "api_key": "tgpak_test", "target": "new"}, 201)
+	job := admin.waitJob(int(res["job_id"].(float64)))
+	if job["status"] != "done" || job["done"].(float64) != 1200 || pages.Load() != 3 {
+		t.Fatalf("rate-limited import: %v (pages %d)", job, pages.Load())
 	}
 }

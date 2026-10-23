@@ -69,3 +69,9 @@ export function duration(seconds: number): string {
 	if (m < 60) return `${m} min ${seconds % 60}s`;
 	return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
+
+/** Seconds the job is waiting for a remote rate limit, from its status line. */
+export function rateLimitWait(j: Job): number | null {
+	const m = /^rate_limited:(\d+)$/.exec(j.message);
+	return m && j.status === 'running' ? Number(m[1]) : null;
+}

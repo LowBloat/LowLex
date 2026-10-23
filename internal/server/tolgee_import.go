@@ -170,6 +170,8 @@ func runTolgeeImport(ctx context.Context, j *jobRun) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// shown on the Tasks page as "waiting for Tolgee's rate limit"
+	c.OnRateLimit = func(wait time.Duration) { j.Note(fmt.Sprintf("rate_limited:%d", int(wait.Seconds()))) }
 	result := &tolgeeImportResult{LanguagesAdded: []string{}}
 
 	// languages first, so every translation has somewhere to go
