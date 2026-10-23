@@ -10,6 +10,7 @@ import (
 	"io"
 	"io/fs"
 	"log"
+	"mime"
 	"net/http"
 	"path"
 	"runtime/debug"
@@ -33,6 +34,12 @@ type Server struct {
 	mux     *http.ServeMux
 	limiter *loginLimiter
 	jobs    *jobRunner
+}
+
+func init() {
+	// not in Go's built-in table on every platform
+	mime.AddExtensionType(".webmanifest", "application/manifest+json")
+	mime.AddExtensionType(".ico", "image/x-icon")
 }
 
 func New(db *sql.DB, cfg config.Config, box *secure.Box, ui fs.FS) *Server {
