@@ -53,10 +53,23 @@ func (s *Server) listKeys(w http.ResponseWriter, r *http.Request, pc *projectCtx
 		args = append(args, ns[0])
 	}
 	if term := strings.TrimSpace(q.Get("q")); term != "" {
-		like := likeArg(term)
-		where = append(where, `(k.name LIKE ? ESCAPE '\' OR k.description LIKE ? ESCAPE '\'
-			OR EXISTS (SELECT 1 FROM translations t WHERE t.key_id = k.id AND t.text LIKE ? ESCAPE '\'))`)
-		args = append(args, like, like, like)
+		if fts := trigramQuery(term); fts != "" {
+			// the trigram index narrows the keys down (keys changed since the last index update
+			// are checked directly), then a case-insensitive substring test in every script keeps
+			// only real matches. The index catches up in the background.
+			s.flushSearchLater()
+			needle := strings.ToLower(term)
+			where = append(where, `k.id IN (SELECT rowid FROM search_index WHERE search_index MATCH ? UNION ALL SELECT key_id FROM search_dirty)
+				AND (lowlex_contains(k.name, ?) OR lowlex_contains(k.description, ?)
+				OR EXISTS (SELECT 1 FROM translations t WHERE t.key_id = k.id AND lowlex_contains(t.text, ?)))`)
+			args = append(args, fts, needle, needle, needle)
+		} else {
+			// one or two characters: too short for trigrams, scan with LIKE
+			like := likeArg(term)
+			where = append(where, `(k.name LIKE ? ESCAPE '\' OR k.description LIKE ? ESCAPE '\'
+				OR EXISTS (SELECT 1 FROM translations t WHERE t.key_id = k.id AND t.text LIKE ? ESCAPE '\'))`)
+			args = append(args, like, like, like)
+		}
 	}
 	if tag := strings.TrimSpace(q.Get("tag")); tag != "" {
 		where = append(where, "EXISTS (SELECT 1 FROM json_each(k.tags) WHERE value = ?)")

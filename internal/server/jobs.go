@@ -28,6 +28,7 @@ var jobHandlers = map[string]jobHandler{}
 
 type jobRunner struct {
 	wake    chan struct{}
+	ctx     context.Context
 	stop    context.CancelFunc
 	wg      sync.WaitGroup
 	mu      sync.Mutex
@@ -50,9 +51,10 @@ type jobRun struct {
 
 func (s *Server) startJobs() {
 	ctx, cancel := context.WithCancel(context.Background())
-	s.jobs = &jobRunner{wake: make(chan struct{}, 1), stop: cancel, running: map[int64]context.CancelFunc{}}
+	s.jobs = &jobRunner{wake: make(chan struct{}, 1), ctx: ctx, stop: cancel, running: map[int64]context.CancelFunc{}}
 	// jobs left running by a previous process resume from their saved state
 	s.db.Exec(`UPDATE jobs SET status = 'queued' WHERE status = 'running'`)
+	s.flushSearchLater() // keys from an upgrade or an interrupted flush
 	for range jobWorkers {
 		s.jobs.wg.Add(1)
 		go s.jobWorker(ctx)
@@ -151,6 +153,7 @@ func (s *Server) runJob(parent context.Context, j *jobRun) {
 	switch {
 	case err == nil:
 		s.finishJob(j.ID, "done", "", result)
+		s.flushSearchLater() // imports change many keys; index them now rather than on the next search
 	case errors.Is(err, errJobCancelled):
 		s.finishJob(j.ID, "cancelled", "", result)
 	case parent.Err() != nil:

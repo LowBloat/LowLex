@@ -3,13 +3,31 @@ package store
 
 import (
 	"database/sql"
+	"database/sql/driver"
 	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
-	_ "modernc.org/sqlite"
+	"modernc.org/sqlite"
 )
+
+// lowlex_contains(text, needle) is a substring test that ignores case in every script,
+// unlike LIKE, which folds ASCII only. needle must already be lower case.
+func init() {
+	sqlite.MustRegisterDeterministicScalarFunction("lowlex_contains", 2, func(_ *sqlite.FunctionContext, args []driver.Value) (driver.Value, error) {
+		text, _ := args[0].(string)
+		needle, _ := args[1].(string)
+		if b, ok := args[0].([]byte); ok {
+			text = string(b)
+		}
+		if strings.Contains(strings.ToLower(text), needle) {
+			return int64(1), nil
+		}
+		return int64(0), nil
+	})
+}
 
 //go:embed schema.sql
 var schemaV1 string
@@ -17,8 +35,11 @@ var schemaV1 string
 //go:embed schema2.sql
 var schemaV2 string
 
+//go:embed schema3.sql
+var schemaV3 string
+
 // migrations[i] moves the database from user_version i to i+1.
-var migrations = []string{schemaV1, schemaV2}
+var migrations = []string{schemaV1, schemaV2, schemaV3}
 
 // Open creates the data directory if needed, opens lowlex.db and migrates it.
 func Open(dataDir string) (*sql.DB, error) {
