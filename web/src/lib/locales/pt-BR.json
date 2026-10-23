@@ -134,6 +134,7 @@
   "jobs.kind.tolgee.import": "Importação do Tolgee",
   "jobs.progress": "Progresso",
   "jobs.progressLabel": "{done} de {total}",
+  "jobs.rateLimited": "O Tolgee pediu para ir mais devagar: aguardando {time} e seguindo sozinho",
   "jobs.result.mt": "{n} textos traduzidos",
   "jobs.result.tolgee": "{keys} chaves e {texts} textos importados",
   "jobs.retried": "Tarefa de volta na fila; ela continua de onde parou",

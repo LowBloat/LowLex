@@ -1,7 +1,7 @@
 <!-- @codeatlasdev/ui demo #460 · MIT License (c) CodeAtlas · https://ui.codeatlas.com.br/docs/navigation/tabs#line -->
 <script lang="ts">
 	import { PageShell, Tabs, TabsList, TabsTrigger, EmptyState, Button, Chip, Row, Skeleton, Stack, Progress } from '@codeatlasdev/ui';
-	import { watchJobs, percent } from '#lib/jobs.svelte.ts';
+	import { watchJobs, percent, rateLimitWait, duration } from '#lib/jobs.svelte.ts';
 	import { session } from '#lib/session.svelte.ts';
 	import type { Job } from '#lib/api.ts';
 	import { FolderX } from '@lucide/svelte';
@@ -94,6 +94,7 @@
 				</Row>
 				<Progress value={percent(j)} label="{j.title} {percent(j)}%" />
 				<span class="lx-mono lx-muted small">{j.done.toLocaleString()} / {j.total.toLocaleString()} · {percent(j)}%</span>
+				{#if rateLimitWait(j) !== null}<span class="lx-muted small">{t('jobs.rateLimited', { time: duration(rateLimitWait(j)!) })}</span>{/if}
 			</div>
 		{/each}
 		{@render children()}
