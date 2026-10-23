@@ -1,0 +1,163 @@
+---
+name: codeatlas-ui
+description: "Use when building any UI with @codeatlasdev/ui: components, layouts, pages, navigation."
+globs: ["**/*.svelte", "**/routes/**/*.svelte", "**/components/**/*.svelte"]
+alwaysApply: false
+---
+
+# @codeatlasdev/ui
+
+Svelte 5 UI framework. Components are self-contained and prop-driven. Compose them like Lego, don't fight them with CSS.
+
+## When to use
+- Building any Svelte page or component that imports from `@codeatlasdev/ui`
+- Choosing the right page layout (AppList vs AppForm vs AppSettings vs PageShell)
+- Setting up AppShell navigation
+- Adding charts, tables, forms, overlays
+
+## Non-negotiable rules
+
+1. **Never write layout CSS.** Use `Grid`, `Row`, `Stack` with gap/cols props.
+2. **Never use arbitrary colors.** Use `--ca-*` semantic tokens or component variants.
+3. **Never add `padding:` or `margin:` inline.** Use component props or `--ca-space-N` tokens.
+4. **Never put AppShellLayout in a shared layout.** Only in authenticated route layouts (e.g. `painel/+layout.svelte`).
+5. **CSS imports go once, in the root layout only.**
+6. **Import from `@codeatlasdev/ui`**, never from internal paths like `../../../components/Button`.
+7. **Never combine `will-change: transform` with `backdrop-filter`.** Kills glass blur.
+
+## Setup (root layout, once)
+
+```svelte
+<!-- src/routes/+layout.svelte -->
+<script>
+  import '@codeatlasdev/ui/styles/global.css';
+  // global.css already includes materials.css, themes and utilities
+  import { colorScheme } from '@codeatlasdev/ui';
+  import { onMount } from 'svelte';
+  let { children } = $props();
+  onMount(() => colorScheme.init());
+</script>
+{@render children()}
+```
+
+```ts
+// src/lib/theme.ts: the one ThemeOptions object shared by the plugin and the hook.
+// Type-only import from '@codeatlasdev/ui/vite' ('/astro' in Astro): vite.config loads this file in Node,
+// which cannot evaluate the .svelte files behind the package root.
+import type { ThemeOptions } from '@codeatlasdev/ui/vite';
+export const theme: ThemeOptions = {
+  presets: [{ id: 'acme', color: '#2563eb' }],
+  defaultPreset: 'acme',
+  defaultScheme: 'system',
+};
+
+// vite.config.ts (import with the .ts extension: Vite's native config loader needs it)
+import { sveltekit } from '@sveltejs/kit/vite';
+import { caErrorPlugin, caThemePlugin } from '@codeatlasdev/ui/vite';
+import { theme } from './src/lib/theme.ts'; // keep the .ts extension: Vite 8's native config loader needs it
+// caThemePlugin: anti-FOUC script + ssr.noExternal for @tanstack/svelte-table and shiki
+// caErrorPlugin: scaffolds +error.svelte and error.html once, never overwrites. Order in `plugins` does not matter.
+export default defineConfig({
+  plugins: [sveltekit(), caThemePlugin(theme), caErrorPlugin({ scaffold: true, theme })],
+});
+
+// src/hooks.server.ts: theme script in SSR/prerendered pages + sanitized server errors
+import { sequence } from '@sveltejs/kit/hooks';
+import { caThemeHandle, createErrorHandler } from '@codeatlasdev/ui/kit';
+import { theme } from './lib/theme.ts';
+export const handle = sequence(caThemeHandle(theme));
+export const handleError = createErrorHandler();
+```
+
+Always pass the same `theme` to `caThemeHandle(theme)` and `caThemePlugin(theme)`: called with no argument they fall back to the default brand and ignore your presets. `bunx @codeatlasdev/ui init` writes exactly this (plus `src/lib/theme.ts`, the layout and the viewport meta). Product with its own brand color? Put it in the shared `theme`: `{ presets: [{ id: "acme", color: "#2563eb" }], defaultPreset: "acme", defaultScheme: "system" }`. The full light/dark token set is generated from each preset's hex. Put the logo in `AppShellLayout` with `{#snippet brand()}`.
+
+### SvelteKit 3 (peer allows `^2.12.0 || ^3.0.0`)
+
+Check `@sveltejs/kit` in `package.json` before writing setup code. On Kit 3:
+
+- `svelte.config.js` is ignored and has no `kit` namespace: pass `adapter` and the rest straight to `sveltekit({ adapter: adapter() })` in `vite.config.ts`.
+- `tsconfig.json` must be `{ "extends": "$app/tsconfig" }` (`.svelte-kit/tsconfig.json` is gone).
+- `$lib` is removed: import app code as `#lib/...` with the extension (`#lib/theme.ts`; needs `"imports": { "#lib/*": "./src/lib/*" }` in `package.json`, which `sv create` writes), or use a relative path.
+- Import the theme in `vite.config.ts` **with the `.ts` extension** (`./src/lib/theme.ts`), on Kit 2 and 3: Vite's native config loader rejects extensionless imports.
+
+`bunx @codeatlasdev/ui init` reads the installed Kit version and does the `#lib` part; it only reports the `svelte.config.js` and tsconfig changes.
+
+## Heavy components live in subpaths
+
+Charts, DataTable and CodeSnippet are NOT in the root import. Each needs its own peer installed.
+
+| import from | components | install |
+|---|---|---|
+| `@codeatlasdev/ui/charts` | `LineChart` `BarChart` `PieChart` `ScatterChart` `HeatmapChart` `GaugeChart` `RadarChart` `Sparkline` + chart types | `echarts` |
+| `@codeatlasdev/ui/table` | `DataTable*`, `Table`, `createCaTable`, `createCaColumnHelper`, `caTableFeatures`, `PaginationState`, `SortingState` | `@tanstack/svelte-table` |
+| `@codeatlasdev/ui/code` | `CodeSnippet` | `shiki` |
+
+`SimpleTable` and `UserCell` stay in the root import and need nothing extra.
+
+Icons passed to components (`icon: Settings`) are `@lucide/svelte` components. The package uses it internally, but Bun's isolated linker does not expose it to the app: run `bun add @lucide/svelte` in the app before importing icons.
+
+## Look up the real API before writing a prop
+
+Never guess a prop name. This skill and `API.md` track the `main` branch, which can be ahead of the `@codeatlasdev/ui` the project has installed: a prop, snippet or MCP tool listed here may not exist in the installed version. Check the installed version first (`node_modules/@codeatlasdev/ui/package.json`) and prefer what that package answers over this file. Two sources, both generated from the source types:
+
+1. **MCP server (preferred).** `ca-ui-mcp` answers `get_component("Button")` (props, defaults, snippets, `ca-*` classes), `get_export("setLocale")` (signature and summary of any function, store, constant or type: `caErrorPlugin`, `createErrorHandler`, `nativeFeel`, `primeKeyboard`, `toast`...), `list_components`, `search_tokens("safe-bottom")`, `list_surfaces()` (the `data-style` surface styles and which draw a blur) and `get_guide("theming")`. Setup: `claude mcp add codeatlas-ui -- npx -y -p @codeatlasdev/ui ca-ui-mcp`.
+2. **[API.md](./API.md)**: the same data as one markdown file; its first lines name the version it was generated for. Offline fallback; for the installed version read `node_modules/@codeatlasdev/ui/dist/components.json` instead. Large, search it instead of reading it whole. Components first, then the `# Non-component exports` section grouped by import path. Regenerate with `bun run --cwd packages/ui manifest -- --skill` after changing a component.
+
+## Mobile, theme, SEO
+
+- **Mobile.** Heights use `var(--ca-vh)`, never `100vh`/`100dvh`. Fixed UI pads with `var(--ca-safe-*)`. Keyboard-aware forms use `use:keyboardAware`. Full-screen mobile screens are `MobilePane`, sticky form bars are `StickyActions`. Never write a 44px touch override: it is global under `(pointer: coarse)`.
+- **Opening a view with a text field (dialog, sheet, search).** iOS only opens the keyboard for `focus()` called synchronously inside the tap. In the tap handler call `primeKeyboard()` first, then open the view, and mark the real field `use:autofocus`: `<Button onclick={() => { primeKeyboard(); open = true; }}>`. On touch, `autofocus` and `focusTextField` only focus after `primeKeyboard()` (no half-focused field without a keyboard); pass `{ touch: true }` to force it. No-op with a mouse. Never hand-roll `setTimeout(() => input.focus())`.
+- **Streaming, external links, export.** Rows arriving over time are a `LiveList` (polite batched announcements, follow-the-tail that pauses when the user scrolls up, never moves focus; no `StatusChip`/live regions inside rows). External links are `ExternalLink` (rel, icon, localised "opens in a new tab"), not a hand-written `target="_blank"`. A CSV/JSON download is `ExportMenu` or `toCsv`/`toJson`/`downloadFile`.
+- **Theme.** One `ThemeOptions` object in `src/lib/theme.ts`, passed to `caThemeHandle`/`caThemePlugin` (SvelteKit) or `caUI` (Astro). Keep it a plain object with a type-only import so config files can load it in Node. Override tokens by declaring `--ca-*` on `:root`, no `!important`. Local dark/light islands: `data-theme-scope="dark|light"`.
+- **Setup.** `bunx @codeatlasdev/ui init` wires all of the above into a fresh SvelteKit or Astro app and is a dry run unless `--write` is passed (it prints `would create` and diffs, never overwrites a file, and keeps a `theme` the app already imports from elsewhere).
+- **SEO.** Public pages use `<Seo>` from `@codeatlasdev/ui/seo` with `canonical`; private pages pass `noindex`.
+- **A11y tests.** `await expectNoA11yViolations(container)` from `@codeatlasdev/ui/testing` in every state (open, error, empty, light, dark); needs the optional peer `axe-core`.
+
+## Actions (`@codeatlasdev/ui/actions`)
+
+Import from the subpath, never copy the logic. Every export:
+
+| export | use |
+|---|---|
+| `autofocus` | `use:autofocus` on the field of a view that just opened; touch-safe (see Mobile above) |
+| `primeKeyboard` | helper, not an action: call in the tap handler that opens a view with an autofocused field |
+| `focusTextField` | `focusTextField(el, force?)`: the focus logic behind `autofocus`, for imperative focus |
+| `keyboardAware` | `use:keyboardAware` on forms and composers: keeps the focused field above the on-screen keyboard |
+| `focusTrap` | `use:focusTrap={open}` on custom overlays (Dialog and Sheet already trap focus) |
+| `clickOutside` | `use:clickOutside={() => close()}` for custom popovers |
+| `clipboard` | `use:clipboard={text}` copies on click and fires `copy` (prefer `CopyButton`) |
+| `longpress` | `use:longpress={500}` fires `longpress` after the pointer is held for that many ms |
+| `scrollFocusable` | `use:scrollFocusable` on a scroll container: tab stop only while it overflows |
+
+## Pick a demo by number
+
+Every docs demo has a stable id `#NNN` (list: [DEMOS.md](./DEMOS.md), gallery: https://ui.codeatlas.com.br/gallery). An id, a `?pick=012,045` link and pasted "I picked these N from the @codeatlasdev/ui gallery" text are the same selection.
+
+1. Unknown id: `search_demos({ query })` (MCP `ca-ui-mcp`). Known ids: `get_demo({ ids })`, at most 8 per call. Without MCP, fetch `https://ui.codeatlas.com.br/api/v1/en/e/NNN.txt`.
+2. Port: keep component names, props, variants and motion tokens as in the reference; change only data, copy and theme. The reference's **Spec** list states the literal values of the demo (props, snippets, state, counts, sizes): your port must satisfy every line unless the user's data requires otherwise. Keep the first comment line (license) of the reference in the file you write.
+3. Report one line per demo: `#NNN title → file, what changed, demo link`.
+
+The user can also run `bunx @codeatlasdev/ui pick` (opens the gallery, prints the ids they send, e.g. `#005 #012`); treat that output as the selection.
+
+## When the library gets in your way
+
+A bug, a missing prop or component, a migration step the guide does not cover, or docs that lie. Do both, in this order:
+
+1. **Work around it in the user's code, visibly.** Keep the workaround small and put one marker line next to it: `// ca-ui-workaround(#<n>): <one line why>` (`<!-- ca-ui-workaround(#<n>): <why> -->` in markup). `<n>` is the issue number from step 2; until you have it, write `#0` and fix it afterwards. `bunx @codeatlasdev/ui workarounds` lists the markers and which issues are closed, so the workaround can be removed after an upgrade.
+2. **Report it.** Call `report_issue({ kind, title, component?, expected, actual, repro?, workaround?, version? })` (`kind`: `bug`, `missing`, `migration-gap`, `docs`). It returns a sanitized body, the list of redactions and a prefilled issue-form URL plus a `gh issue create` command. It never posts: show the user the body and open the URL or run the command. First search existing issues (`gh issue list --repo codeatlasdev/ui --search "<words>"`) and use that number in the marker instead of opening a duplicate.
+
+Privacy rules for every field you write (the tool redacts again, but do not rely on it): neutral names only (`Item A`, `user@example.com`). Never include project, company or customer names, file paths, URLs other than ui.codeatlas.com.br and github.com/codeatlasdev, env variable names or values, tokens, emails, IPs, data or business logic. The repro is the smallest snippet that shows the problem with generic names, not an excerpt of the user's file.
+
+## Migrating a React app (MUI, shadcn/Radix, Chakra)
+
+Call `get_guide("migrate-react")` before touching a React codebase and follow it: choose rewrite (small app) or route-by-route incremental (never mount React inside Svelte), set up SvelteKit with `bunx @codeatlasdev/ui init --write`, then port theme and shell first, one list/form/settings page next (`AppList`, `AppForm`, `AppSettings`, `PageShell`, not hand-built wrappers). Translate hooks to runes (`useState`→`$state`, `useMemo`→`$derived`, `useEffect`→`$effect` only for side effects, never to compute a value; `ref`→`bind:this`; children/render props→snippets; context→`setContext`), map components only with the guide's tables and confirm every prop with `get_component`, map the design tokens into one `ThemeOptions`, and move TanStack Table to `@codeatlasdev/ui/table`. If something has no equivalent, never invent a component: write a `ca-ui-workaround(#n)` marker next to a documented workaround and call `report_issue` with `kind: "migration-gap"` using neutral names only (no project, path, URL, secret or business logic).
+
+## Companion files
+
+- [LAYOUT.md](./LAYOUT.md): Grid, Row, Stack, all props and composition patterns
+- [PAGE-TEMPLATES.md](./PAGE-TEMPLATES.md): AppList, AppForm, AppSettings, PageShell
+- [APPSHELL.md](./APPSHELL.md): navigation shell setup
+- [COMPONENTS.md](./COMPONENTS.md): Button, inputs, display, overlays, curated usage examples
+- [API.md](./API.md): generated props, defaults and classes for every component
+- [DEMOS.md](./DEMOS.md): generated list of numbered demos (id, title, page, components)
+- [ANTIPATTERNS.md](./ANTIPATTERNS.md): explicit don'ts with corrected alternatives
