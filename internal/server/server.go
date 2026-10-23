@@ -130,7 +130,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Frame-Options", "DENY")
 
-	if strings.HasPrefix(r.URL.Path, "/api/") {
+	if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/v2/") {
 		// API keys are meant for apps and CI, including browser apps on other origins.
 		// Cookies are never sent with a wildcard origin, so sessions stay same-origin.
 		h.Set("Access-Control-Allow-Origin", "*")
@@ -214,6 +214,8 @@ func (s *Server) routes() {
 	m.Handle("GET /api/projects/{slug}/api-keys", s.project(roleDeveloper, s.listAPIKeys))
 	m.Handle("POST /api/projects/{slug}/api-keys", s.project(roleDeveloper, s.createAPIKey))
 	m.Handle("DELETE /api/projects/{slug}/api-keys/{id}", s.project(roleDeveloper, s.deleteAPIKey))
+
+	s.tolgeeRoutes()
 
 	m.Handle("/api/", handler(func(w http.ResponseWriter, r *http.Request) error { return errNotFound }))
 	m.HandleFunc("/", s.serveUI)
