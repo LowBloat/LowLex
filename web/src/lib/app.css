@@ -1,0 +1,25 @@
+/* LowBloat touches on top of the CodeAtlas theme. Unlayered rules win over the kit's layers. */
+:root {
+	--lx-signal: #b8f238;
+	--lx-on-signal: #1a2700;
+	--ca-scrim-blur: none;
+}
+
+/* Keys, codes and metadata use the mono face, like the LowBloat site. */
+.lx-mono {
+	font-family: var(--ca-font-mono);
+	font-size: 0.875em;
+}
+
+.lx-muted {
+	color: var(--ca-text-secondary);
+}
+
+/* ca-ui-workaround(#409): AuthLayout paints its panel with a fixed brand gradient and blobs, with no
+   prop for a flat panel; LowBloat bands are flat ink. */
+.ca-auth__panel {
+	background: #171a17;
+}
+.ca-auth__blobs {
+	display: none;
+}

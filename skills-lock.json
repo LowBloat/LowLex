@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "skills": {
+    "codeatlas-dx": {
+      "source": "codeatlasdev/ui",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/codeatlas-dx/SKILL.md",
+      "computedHash": "290d66af3515971f116d72a02159f89f9694ba392bcf155dbc24504333adf3a6"
+    },
+    "codeatlas-ui": {
+      "source": "codeatlasdev/ui",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/codeatlas-ui/SKILL.md",
+      "computedHash": "8c570a94c3be73c94858e96e0a713051a8a155c7b4d485bed130686cdf8ad8e2"
+    },
+    "codeatlas-writing": {
+      "source": "codeatlasdev/ui",
+      "sourceType": "github",
+      "skillPath": ".agents/skills/codeatlas-writing/SKILL.md",
+      "computedHash": "cad5ce2f7e90b1fc8c78d37424f17e517bb584f45631a903c8a48d878078aae8"
+    }
+  }
+}

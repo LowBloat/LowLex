@@ -1,0 +1,15 @@
+# build output
+/dist/
+/lowlex
+/lowlex.exe
+web/build/*
+!web/build/.keep
+web/.svelte-kit/
+web/node_modules/
+
+# local data and secrets
+lowlex_data/
+.env
+*.db
+*.db-wal
+*.db-shm

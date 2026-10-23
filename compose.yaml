@@ -1,0 +1,27 @@
+# LowLex with Docker Compose.
+#   cp .env.example .env    # set LOWLEX_ADMIN_PASSWORD at least
+#   docker compose up -d
+services:
+  lowlex:
+    image: ghcr.io/lowbloat/lowlex:latest
+    build: .
+    container_name: lowlex
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LOWLEX_HOST: 0.0.0.0
+      LOWLEX_PORT: 4747
+      LOWLEX_DATA_DIR: /data
+    ports:
+      - "${LOWLEX_BIND:-0.0.0.0}:${LOWLEX_PORT:-4747}:4747"
+    volumes:
+      - lowlex_data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+
+volumes:
+  lowlex_data:
