@@ -14,8 +14,11 @@ import (
 //go:embed schema.sql
 var schemaV1 string
 
+//go:embed schema2.sql
+var schemaV2 string
+
 // migrations[i] moves the database from user_version i to i+1.
-var migrations = []string{schemaV1}
+var migrations = []string{schemaV1, schemaV2}
 
 // Open creates the data directory if needed, opens lowlex.db and migrates it.
 func Open(dataDir string) (*sql.DB, error) {

@@ -102,9 +102,11 @@ func serve(cfg config.Config) error {
 	}
 
 	addr := net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))
+	app := server.New(db, cfg, box, ui)
+	defer app.Close() // running background jobs go back to the queue
 	srv := &http.Server{
 		Addr:              addr,
-		Handler:           server.New(db, cfg, box, ui),
+		Handler:           app,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}

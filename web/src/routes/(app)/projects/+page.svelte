@@ -1,13 +1,15 @@
 <!-- @codeatlasdev/ui demo #168 · MIT License (c) CodeAtlas · https://ui.codeatlas.com.br/docs/layout/empty-state#hero -->
 <script lang="ts">
 	import { PageShell, Card, Grid, Stack, Row, Button, EmptyState, Progress, Chip } from '@codeatlasdev/ui';
-	import { Plus, FolderKanban, KeyRound } from '@lucide/svelte';
+	import { Plus, FolderKanban, KeyRound, DownloadCloud } from '@lucide/svelte';
 	import { session, langName } from '#lib/session.svelte.ts';
 	import { t, num } from '#lib/i18n.svelte.ts';
 	import NewProjectDialog from '#lib/components/NewProjectDialog.svelte';
+	import TolgeeImportDialog from '#lib/components/TolgeeImportDialog.svelte';
 	import type { ProjectSummary, LangStats } from '#lib/api.ts';
 
 	let creating = $state(false);
+	let importing = $state(false);
 
 	function pct(p: ProjectSummary, l: LangStats) {
 		return p.keys ? Math.round((l.translated / p.keys) * 100) : 0;
@@ -25,10 +27,16 @@
 >
 	{#snippet actions()}
 		{#if session.isAdmin}
-			<Button variant="filled" size="sm" onclick={() => (creating = true)}>
-				{#snippet leading()}<Plus size={14} />{/snippet}
-				{t('projects.new')}
-			</Button>
+			<Row gap={8} wrap>
+				<Button variant="outlined" size="sm" onclick={() => (importing = true)}>
+					{#snippet leading()}<DownloadCloud size={14} />{/snippet}
+					{t('tolgee.open')}
+				</Button>
+				<Button variant="filled" size="sm" onclick={() => (creating = true)}>
+					{#snippet leading()}<Plus size={14} />{/snippet}
+					{t('projects.new')}
+				</Button>
+			</Row>
 		{/if}
 	{/snippet}
 
@@ -42,6 +50,7 @@
 			{#snippet actions()}
 				{#if session.isAdmin}
 					<Button variant="filled" onclick={() => (creating = true)}>{t('projects.new')}</Button>
+					<Button variant="ghost" onclick={() => (importing = true)}>{t('tolgee.open')}</Button>
 				{/if}
 			{/snippet}
 		</EmptyState>
@@ -75,6 +84,7 @@
 </PageShell>
 
 <NewProjectDialog bind:open={creating} />
+<TolgeeImportDialog bind:open={importing} />
 
 <style>
 	.desc {

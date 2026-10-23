@@ -197,3 +197,33 @@ export interface Meta {
 	languages: Record<string, string>;
 	formats: { id: string; label: string; ext: string }[];
 }
+
+export type JobStatus = 'queued' | 'running' | 'done' | 'failed' | 'cancelled';
+
+export interface Job {
+	id: number;
+	kind: 'tolgee.import' | 'mt.batch' | string;
+	title: string;
+	status: JobStatus;
+	total: number;
+	done: number;
+	message: string;
+	result?: Record<string, unknown>;
+	project_slug?: string;
+	project_name?: string;
+	created_by: string;
+	created_at: string;
+	started_at: string | null;
+	finished_at: string | null;
+	updated_at: string;
+	cancelling: boolean;
+}
+
+export interface TolgeeInfo {
+	project_id: number;
+	project_name: string;
+	description: string;
+	base_language: string;
+	languages: { id: number; tag: string; name: string; base: boolean }[];
+	keys: number;
+}

@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -371,27 +373,20 @@ func (s *Server) suggest(w http.ResponseWriter, r *http.Request, pc *projectCtx)
 	return nil
 }
 
-// batchTranslate fills a language with machine translations, by default only missing cells.
+// batchTranslate queues a job that fills a language with machine translations,
+// by default only the missing cells.
 func (s *Server) batchTranslate(w http.ResponseWriter, r *http.Request, pc *projectCtx) error {
-	var in struct {
-		Lang       string  `json:"lang"`
-		ProviderID int64   `json:"provider_id"`
-		KeyIDs     []int64 `json:"key_ids"`
-		Overwrite  bool    `json:"overwrite"`
-		State      string  `json:"state"`
-		Source     string  `json:"source"`
-	}
+	var in mtBatchParams
 	if err := readJSON(r, &in); err != nil {
 		return err
 	}
 	if !pc.canEditLang(in.Lang) {
 		return errf(http.StatusForbidden, "language_forbidden", "You cannot edit %s in this project", in.Lang)
 	}
-	source := in.Source
-	if source == "" {
-		source = pc.BaseLanguage
+	if in.Source == "" {
+		in.Source = pc.BaseLanguage
 	}
-	if source == in.Lang {
+	if in.Source == in.Lang {
 		return badRequest("Choose a target language different from the source")
 	}
 	if in.State == "" {
@@ -410,91 +405,171 @@ func (s *Server) batchTranslate(w http.ResponseWriter, r *http.Request, pc *proj
 	if !p.Enabled {
 		return badRequest("This provider is disabled")
 	}
-	srcID, err := s.languageID(r.Context(), pc.ID, source)
+	if _, err := s.languageID(r.Context(), pc.ID, in.Source); err != nil {
+		return err
+	}
+	if _, err := s.languageID(r.Context(), pc.ID, in.Lang); err != nil {
+		return err
+	}
+	total, err := s.countMTBatch(r.Context(), pc.ID, in, 0)
 	if err != nil {
 		return err
 	}
-	dstID, err := s.languageID(r.Context(), pc.ID, in.Lang)
+	if total == 0 {
+		writeJSON(w, 200, map[string]any{"job_id": nil, "total": 0})
+		return nil
+	}
+	in.ProjectID, in.Context = pc.ID, pc.Description
+	id, err := s.createJob(pc.ID, "mt.batch", p.Name+" → "+in.Lang, pc.userID, in)
 	if err != nil {
 		return err
 	}
+	s.db.Exec(`UPDATE jobs SET total = ? WHERE id = ?`, total, id)
+	writeJSON(w, 201, map[string]any{"job_id": id, "total": total})
+	return nil
+}
 
-	q := `SELECT k.id, k.name, k.description, st.text, COALESCE(dt.state, '')
-		FROM keys k JOIN translations st ON st.key_id = k.id AND st.language_id = ?
-		LEFT JOIN translations dt ON dt.key_id = k.id AND dt.language_id = ?
-		WHERE k.project_id = ? AND st.text <> ''`
-	args := []any{srcID, dstID, pc.ID}
-	if in.Overwrite {
+type mtBatchParams struct {
+	Lang       string  `json:"lang"`
+	ProviderID int64   `json:"provider_id"`
+	KeyIDs     []int64 `json:"key_ids"`
+	Overwrite  bool    `json:"overwrite"`
+	State      string  `json:"state"`
+	Source     string  `json:"source"`
+	ProjectID  int64   `json:"project_id"`
+	Context    string  `json:"context"`
+}
+
+func init() { jobHandlers["mt.batch"] = runMTBatch }
+
+// mtBatchWhere selects the keys still to translate after key id `after`.
+func mtBatchWhere(p mtBatchParams, after int64) (string, []any) {
+	q := `FROM keys k
+		JOIN languages sl ON sl.project_id = k.project_id AND sl.code = ?
+		JOIN languages dl ON dl.project_id = k.project_id AND dl.code = ?
+		JOIN translations st ON st.key_id = k.id AND st.language_id = sl.id
+		LEFT JOIN translations dt ON dt.key_id = k.id AND dt.language_id = dl.id
+		WHERE k.project_id = ? AND k.id > ? AND st.text <> ''`
+	args := []any{p.Source, p.Lang, p.ProjectID, after}
+	if p.Overwrite {
 		q += ` AND COALESCE(dt.state, '') <> 'reviewed'`
 	} else {
 		q += ` AND dt.key_id IS NULL`
 	}
-	if len(in.KeyIDs) > 0 {
-		q += ` AND k.id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(in.KeyIDs)), ",") + `)`
-		for _, id := range in.KeyIDs {
+	if len(p.KeyIDs) > 0 {
+		q += ` AND k.id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(p.KeyIDs)), ",") + `)`
+		for _, id := range p.KeyIDs {
 			args = append(args, id)
 		}
 	}
-	rows, err := s.db.QueryContext(r.Context(), q+` ORDER BY k.id`, args...)
-	if err != nil {
-		return err
-	}
-	var ids []int64
-	var items []mt.Item
-	for rows.Next() {
-		var id int64
-		var it mt.Item
-		var state string
-		if err := rows.Scan(&id, &it.Key, &it.Description, &it.Text, &state); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-		items = append(items, it)
-	}
-	rows.Close()
-	if len(items) == 0 {
-		writeJSON(w, 200, map[string]any{"translated": 0, "failed": 0})
-		return nil
-	}
+	return q, args
+}
 
-	t, err := mt.New(p.Type, p.Config)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Minute)
-	defer cancel()
-	results, terr := mt.Translate(ctx, t, mt.Request{Source: source, Target: in.Lang, Items: items, Context: pc.Description})
+func (s *Server) countMTBatch(ctx context.Context, projectID int64, p mtBatchParams, after int64) (int, error) {
+	p.ProjectID = projectID
+	where, args := mtBatchWhere(p, after)
+	var n int
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) `+where, args...).Scan(&n)
+	return n, err
+}
 
-	origin := "mt:" + p.Type
-	if p.AI {
-		origin = "ai:" + p.Config.Model
+type mtBatchState struct {
+	After      int64 `json:"after"`
+	Done       int   `json:"done"`
+	Translated int   `json:"translated"`
+}
+
+func runMTBatch(ctx context.Context, j *jobRun) (any, error) {
+	s := j.s
+	var p mtBatchParams
+	if err := json.Unmarshal(j.Params, &p); err != nil {
+		return nil, err
 	}
-	ts := now()
-	tx, err := s.db.BeginTx(context.WithoutCancel(r.Context()), nil)
+	var st mtBatchState
+	if j.State != "" {
+		json.Unmarshal([]byte(j.State), &st)
+	}
+	prov, err := s.loadProvider(ctx, p.ProviderID)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("provider: %w", err)
 	}
-	defer tx.Rollback()
-	for i, text := range results {
-		if text == "" {
-			continue
+	t, err := mt.New(prov.Type, prov.Config)
+	if err != nil {
+		return nil, err
+	}
+	var dstID int64
+	if err := s.db.QueryRowContext(ctx, `SELECT id FROM languages WHERE project_id = ? AND code = ?`, p.ProjectID, p.Lang).Scan(&dstID); err != nil {
+		return nil, fmt.Errorf("language %s is gone", p.Lang)
+	}
+	origin := "mt:" + prov.Type
+	if prov.AI {
+		origin = "ai:" + prov.Config.Model
+	}
+	chunk := 50
+	if prov.AI {
+		chunk = 25
+	}
+	result := func() any { return map[string]int{"translated": st.Translated, "processed": st.Done} }
+
+	for {
+		where, args := mtBatchWhere(p, st.After)
+		rows, err := s.db.QueryContext(ctx, `SELECT k.id, k.name, k.description, st.text `+where+` ORDER BY k.id LIMIT ?`, append(args, chunk)...)
+		if err != nil {
+			return result(), err
 		}
-		if _, err := tx.Exec(`INSERT INTO translations (key_id, language_id, text, state, origin, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (key_id, language_id) DO UPDATE SET text = excluded.text, state = excluded.state, origin = excluded.origin,
-			updated_by = excluded.updated_by, updated_at = excluded.updated_at WHERE translations.state <> 'reviewed'`,
-			ids[i], dstID, text, in.State, origin, nullID(pc.userID), ts); err != nil {
-			return err
+		var ids []int64
+		var items []mt.Item
+		for rows.Next() {
+			var id int64
+			var it mt.Item
+			if err := rows.Scan(&id, &it.Key, &it.Description, &it.Text); err != nil {
+				rows.Close()
+				return result(), err
+			}
+			ids = append(ids, id)
+			items = append(items, it)
+		}
+		rows.Close()
+		if len(items) == 0 {
+			break
+		}
+		texts, err := mt.Translate(ctx, t, mt.Request{Source: p.Source, Target: p.Lang, Items: items, Context: p.Context})
+		if err != nil {
+			return result(), err
+		}
+		tx, err := s.db.BeginTx(ctx, nil)
+		if err != nil {
+			return result(), err
+		}
+		ts := now()
+		for i, text := range texts {
+			if text == "" {
+				continue
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO translations (key_id, language_id, text, state, origin, updated_by, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)
+				ON CONFLICT (key_id, language_id) DO UPDATE SET text = excluded.text, state = excluded.state, origin = excluded.origin,
+				updated_by = excluded.updated_by, updated_at = excluded.updated_at WHERE translations.state <> 'reviewed'`,
+				ids[i], dstID, text, p.State, origin, nullID(j.UserID), ts); err != nil {
+				tx.Rollback()
+				return result(), err
+			}
+			st.Translated++
+		}
+		st.After = ids[len(ids)-1]
+		st.Done += len(ids)
+		b, _ := json.Marshal(st)
+		cerr := j.Checkpoint(tx, st.Done, string(b))
+		if cerr != nil && !errors.Is(cerr, errJobCancelled) {
+			tx.Rollback()
+			return result(), cerr
+		}
+		if err := tx.Commit(); err != nil {
+			return result(), err
+		}
+		if cerr != nil {
+			return result(), cerr
 		}
 	}
-	if err := tx.Commit(); err != nil {
-		return err
-	}
-	s.logActivity(pc.ID, pc.userID, "mt.batch", strconv.Itoa(len(results))+" keys → "+in.Lang+" ("+p.Name+")")
-	resp := map[string]any{"translated": len(results), "failed": len(items) - len(results)}
-	if terr != nil {
-		resp["error"] = terr.Error()
-	}
-	writeJSON(w, 200, resp)
-	return nil
+	s.logActivity(p.ProjectID, j.UserID, "mt.batch", fmt.Sprintf("%d keys → %s (%s)", st.Translated, p.Lang, prov.Name))
+	return result(), nil
 }
