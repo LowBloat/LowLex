@@ -13,3 +13,6 @@ lowlex_data/
 *.db
 *.db-wal
 *.db-shm
+
+# local Claude Code settings
+.claude/
