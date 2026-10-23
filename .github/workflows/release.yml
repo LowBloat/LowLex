@@ -50,7 +50,7 @@ jobs:
         include:
           - { os: ubuntu-latest, target: linux-amd64, bin: lowlex }
           - { os: macos-14, target: darwin-arm64, bin: lowlex }
-          - { os: macos-13, target: darwin-amd64, bin: lowlex }
+          - { os: macos-15-intel, target: darwin-amd64, bin: lowlex }
           - { os: windows-latest, target: windows-amd64, bin: lowlex.exe }
     runs-on: ${{ matrix.os }}
     defaults:
