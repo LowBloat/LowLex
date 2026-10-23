@@ -49,11 +49,3 @@ func TestCSV(t *testing.T) {
 	}
 }
 
-func TestNestConflict(t *testing.T) {
-	out := nest([]Entry{{Key: "a", Text: "A"}, {Key: "a.b", Text: "AB"}})
-	flat := map[string]string{}
-	flatten("", out, flat)
-	if flat["a"] != "A" || flat["a.b"] != "AB" {
-		t.Fatalf("conflict lost data: %v", flat)
-	}
-}

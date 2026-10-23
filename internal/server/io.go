@@ -387,7 +387,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, pc *projectCtx) 
 			return err
 		}
 	}
-	render := func(texts map[int64]string, namespace string) ([]byte, error) {
+	entriesFor := func(texts map[int64]string, namespace string) []formats.Entry {
 		entries := []formats.Entry{}
 		for _, k := range keys {
 			if k.ns != namespace {
@@ -402,7 +402,7 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, pc *projectCtx) 
 			}
 			entries = append(entries, formats.Entry{Key: k.name, Text: text, Description: k.desc})
 		}
-		return formats.Render(format, entries)
+		return entries
 	}
 	namespaces := keyNamespaces(keys)
 
@@ -415,14 +415,12 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, pc *projectCtx) 
 		if err != nil {
 			return err
 		}
-		body, err := render(texts, nsName)
-		if err != nil {
-			return err
-		}
-		return sendFile(w, exportName(info, codes[0], ""), contentType(info.Ext), body)
+		w.Header().Set("Content-Type", contentType(info.Ext))
+		w.Header().Set("Content-Disposition", `attachment; filename="`+path.Base(exportName(info, codes[0], ""))+`"`)
+		return formats.Write(w, format, entriesFor(texts, nsName))
 	}
 
-	// the ZIP is written straight to the response
+	// the ZIP is written straight to the response, one file at a time
 	w.Header().Set("Content-Type", "application/zip")
 	w.Header().Set("Content-Disposition", `attachment; filename="`+base+"-"+format+`.zip"`)
 	zw := zip.NewWriter(w)
@@ -432,15 +430,11 @@ func (s *Server) export(w http.ResponseWriter, r *http.Request, pc *projectCtx) 
 			return err
 		}
 		for _, n := range namespaces {
-			body, err := render(texts, n)
-			if err != nil {
-				return err
-			}
 			f, err := zw.Create(exportName(info, code, n))
 			if err != nil {
 				return err
 			}
-			if _, err := f.Write(body); err != nil {
+			if err := formats.Write(f, format, entriesFor(texts, n)); err != nil {
 				return err
 			}
 		}

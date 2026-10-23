@@ -52,8 +52,27 @@ func TestTolgeeImportLoad(t *testing.T) {
 	t.Logf("%d keys imported in %s (%.0f keys/s); slowest key list during import %s; heap in use %d MB",
 		n, took.Round(time.Millisecond), float64(n)/took.Seconds(), worst.Round(time.Millisecond), mem.HeapInuse>>20)
 
-	// a page of the editor, a search and the project stats on the full project
-	for _, path := range []string{"/api/projects/big-app/keys?per=50&page=1500", "/api/projects/big-app/keys?q=Texto+15999", "/api/projects/big-app", "/api/projects"} {
+	// the first search waits for the index of everything just imported
+	t0 := time.Now()
+	admin.do("GET", "/api/projects/big-app/keys?q=Texto+15999", nil, 200)
+	t.Logf("first search (indexes %d keys): %s", n, time.Since(t0).Round(time.Millisecond))
+
+	// searches stay correct while the index catches up in the background; then they are fast
+	t0 = time.Now()
+	for time.Since(t0) < time.Minute {
+		t1 := time.Now()
+		admin.do("GET", "/api/projects/big-app/keys?q=xto+1234", nil, 200)
+		if time.Since(t1) < 150*time.Millisecond {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	time.Sleep(10 * time.Second) // let the last index batches and the WAL checkpoint finish
+	t.Logf("index caught up after %s", time.Since(t0).Round(time.Second))
+
+	// a page of the editor, searches and the project stats on the full project
+	for _, path := range []string{"/api/projects/big-app/keys?per=50&page=1500", "/api/projects/big-app/keys?q=Texto+15999",
+		"/api/projects/big-app/keys?q=xto+1234", "/api/projects/big-app/keys?q=ctx", "/api/projects/big-app/keys?q=7", "/api/projects/big-app", "/api/projects"} {
 		t0 := time.Now()
 		admin.do("GET", path, nil, 200)
 		t.Logf("GET %s: %s", path, time.Since(t0).Round(time.Millisecond))

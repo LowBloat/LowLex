@@ -84,6 +84,7 @@ func main() {
 }
 
 func serve(cfg config.Config) error {
+	setMemoryLimit()
 	db, err := store.Open(cfg.DataDir)
 	if err != nil {
 		return err

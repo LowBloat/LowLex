@@ -90,39 +90,6 @@ func Parse(format string, data []byte) (map[string]string, error) {
 	return nil, fmt.Errorf("unsupported format %q", format)
 }
 
-// Render writes a single-language file.
-func Render(format string, entries []Entry) ([]byte, error) {
-	sort.Slice(entries, func(i, j int) bool { return entries[i].Key < entries[j].Key })
-	switch format {
-	case "json":
-		m := make(map[string]string, len(entries))
-		for _, e := range entries {
-			m[e.Key] = e.Text
-		}
-		return marshal(m)
-	case "json-nested":
-		return marshal(nest(entries))
-	case "po":
-		return renderPO(entries), nil
-	case "android":
-		return renderAndroid(entries), nil
-	case "ios":
-		return renderStrings(entries), nil
-	case "properties":
-		return renderProperties(entries), nil
-	}
-	return nil, fmt.Errorf("unsupported format %q", format)
-}
-
-func marshal(v any) ([]byte, error) {
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	enc.SetIndent("", "  ")
-	err := enc.Encode(v)
-	return buf.Bytes(), err
-}
-
 // --- JSON ---
 
 func parseJSON(data []byte) (map[string]string, error) {
@@ -164,36 +131,6 @@ func flatten(prefix string, v any, out map[string]string) {
 	case nil:
 		// skip nulls: Tolgee and others use them for untranslated keys
 	}
-}
-
-func nest(entries []Entry) map[string]any {
-	root := map[string]any{}
-	for _, e := range entries {
-		parts := strings.Split(e.Key, ".")
-		node := root
-		for i, p := range parts {
-			if i == len(parts)-1 {
-				if _, isObj := node[p].(map[string]any); isObj {
-					// "a" and "a.b" both exist: keep "a" next to its children with the full key
-					root[e.Key] = e.Text
-				} else {
-					node[p] = e.Text
-				}
-				break
-			}
-			next, ok := node[p].(map[string]any)
-			if !ok {
-				if _, isLeaf := node[p]; isLeaf {
-					node[strings.Join(parts[i:], ".")] = e.Text
-					break
-				}
-				next = map[string]any{}
-				node[p] = next
-			}
-			node = next
-		}
-	}
-	return root
 }
 
 // --- CSV: key, description, then one column per language ---
@@ -325,8 +262,7 @@ func poUnquote(s string) string {
 	return b.String()
 }
 
-func renderPO(entries []Entry) []byte {
-	var b bytes.Buffer
+func renderPO(b *bufio.Writer, entries []Entry) {
 	b.WriteString("msgid \"\"\nmsgstr \"\"\n\"Content-Type: text/plain; charset=UTF-8\\n\"\n\n")
 	for _, e := range entries {
 		if e.Description != "" {
@@ -336,7 +272,6 @@ func renderPO(entries []Entry) []byte {
 		}
 		b.WriteString("msgid " + poQuote(e.Key) + "\nmsgstr " + poQuote(e.Text) + "\n\n")
 	}
-	return b.Bytes()
 }
 
 func parsePO(data []byte) (map[string]string, error) {
@@ -460,8 +395,7 @@ func androidUnescape(s string) string {
 	return b.String()
 }
 
-func renderAndroid(entries []Entry) []byte {
-	var b bytes.Buffer
+func renderAndroid(b *bufio.Writer, entries []Entry) {
 	b.WriteString("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<resources>\n")
 	for _, e := range entries {
 		name := strings.NewReplacer(".", "_", "-", "_", " ", "_").Replace(e.Key)
@@ -471,7 +405,6 @@ func renderAndroid(entries []Entry) []byte {
 		b.WriteString(`    <string name="` + name + `">` + androidEscape(e.Text) + "</string>\n")
 	}
 	b.WriteString("</resources>\n")
-	return b.Bytes()
 }
 
 func parseAndroid(data []byte) (map[string]string, error) {
@@ -507,15 +440,13 @@ func stringsQuote(s string) string {
 	return `"` + r.Replace(s) + `"`
 }
 
-func renderStrings(entries []Entry) []byte {
-	var b bytes.Buffer
+func renderStrings(b *bufio.Writer, entries []Entry) {
 	for _, e := range entries {
 		if e.Description != "" {
 			b.WriteString("/* " + strings.ReplaceAll(e.Description, "*/", "* /") + " */\n")
 		}
 		b.WriteString(stringsQuote(e.Key) + " = " + stringsQuote(e.Text) + ";\n")
 	}
-	return b.Bytes()
 }
 
 var stringsLine = regexp.MustCompile(`(?s)"((?:[^"\\]|\\.)*)"\s*=\s*"((?:[^"\\]|\\.)*)"\s*;`)
@@ -561,8 +492,7 @@ func utf16ToUTF8(b []byte) []byte {
 
 // --- Java .properties (UTF-8) ---
 
-func renderProperties(entries []Entry) []byte {
-	var b bytes.Buffer
+func renderProperties(b *bufio.Writer, entries []Entry) {
 	esc := strings.NewReplacer(`\`, `\\`, "\n", `\n`, "\t", `\t`, "=", `\=`, ":", `\:`)
 	for _, e := range entries {
 		if e.Description != "" {
@@ -570,7 +500,6 @@ func renderProperties(entries []Entry) []byte {
 		}
 		b.WriteString(esc.Replace(e.Key) + "=" + strings.NewReplacer(`\`, `\\`, "\n", `\n`, "\t", `\t`).Replace(e.Text) + "\n")
 	}
-	return b.Bytes()
 }
 
 func parseProperties(data []byte) (map[string]string, error) {
