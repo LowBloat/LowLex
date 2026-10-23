@@ -125,6 +125,16 @@ Import fields (multipart): `file`, `lang` (otherwise from the file name), `names
 
 The import is a background task: it reads 500 keys at a time, shows its progress under **Tasks** and on the project page, and saves its position after every page. If LowLex restarts, it continues where it stopped; a failed or cancelled import can be retried from the same point. A 160,000-key project imports in seconds once Tolgee has answered.
 
+After the move, code written for Tolgee's REST API keeps working. Point it at LowLex, use a LowLex API key (`lx_…`, write scope to change texts) and put the project slug (or its LowLex id) where the Tolgee project id was:
+
+| Tolgee endpoint | What LowLex does |
+|---|---|
+| `POST /v2/projects/{project}/translations` | Sets `{"key", "namespace", "translations": {"en": "…"}}`, creating the key when it does not exist. An empty or `null` text clears that translation. |
+| `PUT /v2/projects/{project}/translations` | Same, but the key must already exist (404 otherwise). |
+| `GET /v2/projects/{project}/translations/{languages}` | `{"en": {…}, "pt-BR": {…}}` for a comma list of languages. Keys nest on dots unless `structureDelimiter=` is empty; `ns` picks a namespace (default: none) and `filterTag` keeps tagged keys. |
+
+The same paths without `{project}` (`/v2/projects/translations`) use the API key's project. Texts written this way show **api** as their origin, and sending a text that has not changed keeps its reviewed state.
+
 You can also export from Tolgee as JSON with one file per language (ZIP) and import the ZIP; that keeps keys, languages and namespaces, and review states start as *translated*.
 
 ### Background tasks
