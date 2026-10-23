@@ -1,0 +1,9 @@
+.git
+dist
+lowlex_data
+web/node_modules
+web/.svelte-kit
+web/build
+.env
+.claude
+.agents

@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "codeatlas-ui": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "-p", "@codeatlasdev/ui", "ca-ui-mcp"]
+    }
+  }
+}
