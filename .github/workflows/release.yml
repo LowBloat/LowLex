@@ -41,6 +41,35 @@ jobs:
             dist/*.zip
             dist/SHA256SUMS
 
+  # Runs each released binary on its own system.
+  smoke:
+    needs: build
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, target: linux-amd64, bin: lowlex }
+          - { os: macos-14, target: darwin-arm64, bin: lowlex }
+          - { os: macos-13, target: darwin-amd64, bin: lowlex }
+          - { os: windows-latest, target: windows-amd64, bin: lowlex.exe }
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: lowlex
+          path: dist
+      - name: Extract
+        run: |
+          cd dist
+          f=$(ls lowlex-*-${{ matrix.target }}.* | head -1)
+          case "$f" in *.zip) unzip -q "$f" ;; *) tar -xzf "$f" ;; esac
+      - name: Smoke test
+        run: scripts/smoke.sh "$(ls -d dist/lowlex-*-${{ matrix.target }}/)${{ matrix.bin }}"
+
   image:
     if: github.ref_type == 'tag'
     needs: build
