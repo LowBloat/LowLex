@@ -23,3 +23,16 @@
 .ca-auth__blobs {
 	display: none;
 }
+
+/* ca-ui-workaround(#673): PageShell is both the scroll container and the centred max-width column,
+   so its scrollbar sits beside the content instead of at the window edge, and the absolutely
+   positioned hidden labels inside it (RecordCell, Checkbox) are placed against the page, giving the
+   document a second scrollbar. The shell's full-width content area scrolls instead. */
+.ca-shell__content {
+	overflow-y: auto;
+	position: relative;
+}
+.ca-page-shell {
+	flex: 1 0 auto;
+	overflow: visible;
+}
