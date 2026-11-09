@@ -13,6 +13,11 @@
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0--only-blue" alt="License: AGPL-3.0-only"></a>
 </p>
 
+<p align="center">
+  <a href="https://github.com/LowBloat/LowLex/releases/latest">Download</a>
+  · <a href="https://lowbloat.app/en/produtos/lowlex/">Website</a>
+</p>
+
 ---
 
 LowLex keeps the keys and translations of your apps in one place, lets developers and translators work on them with their own roles, fills gaps with machine translation or any OpenAI-compatible AI model, and hands the files back to your build in the formats it already reads. It is to translation management what PocketBase is to a backend: a single executable with the web UI inside, no Java, no Postgres, no Redis.
